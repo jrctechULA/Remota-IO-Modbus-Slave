@@ -22,7 +22,7 @@
 #include "esp_event.h"
 #include "esp_eth_enc28j60.h"
 #include "mbcontroller.h"
-
+#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
 
 #include "esp_timer.h"
@@ -219,6 +219,10 @@ void app_main(void)
                           50,   //Tamaño de tablas de configuración
                           50);  //Tamaño de tablas auxiliares
 
+    // Now the tables have been created, it's time for initial config:
+    //i.e.: Set the debug level:
+    s3Tables.configTbl[0][49] = (uint16_t)esp_log_level_get(TAG);
+
     sendbuf = (uint16_t*)heap_caps_malloc(SPI_BUFFER_SIZE * sizeof(uint16_t), MALLOC_CAP_DMA);
     recvbuf = (uint16_t*)heap_caps_malloc(SPI_BUFFER_SIZE * sizeof(uint16_t), MALLOC_CAP_DMA);
 
@@ -263,9 +267,9 @@ void app_main(void)
         portEXIT_CRITICAL(&mb_spinlock); */
 
         print_spi_stats();
-
-        printf("SPI exchange task time: %u us\n", SPI_EXCHANGE_TIME);
-        printf("SPI cycle task time: %u us\n\n", SPI_CYCLE_TIME);
+        //esp_log_level_set(TAG, s3Tables.configTbl[0][49]);
+        ESP_LOGD(TAG, "SPI exchange task time: %u us", SPI_EXCHANGE_TIME);
+        ESP_LOGD(TAG, "SPI cycle task time: %u us\n", SPI_CYCLE_TIME);
         
         ESP_LOGI(TAG, "Analog inputs table:");
         tablePrint(s3Tables.anTbl[0],  s3Tables.anSize);
@@ -290,12 +294,35 @@ void app_main(void)
             xSemaphoreGive(spiTaskSem);
             counter = 0;
         }
-        
+
+        //Check for config table changes:
+        if (s3Tables.configTbl[0][49] != (uint16_t)esp_log_level_get(TAG)){
+            switch (s3Tables.configTbl[0][49]){
+                case 0:
+                    esp_log_level_set(TAG, ESP_LOG_NONE);
+                    break;
+                case 1:
+                    esp_log_level_set(TAG, ESP_LOG_ERROR);
+                    break;
+                case 2:
+                    esp_log_level_set(TAG, ESP_LOG_WARN);
+                    break;
+                case 3:
+                    esp_log_level_set(TAG, ESP_LOG_INFO);
+                    break;
+                case 4:
+                    esp_log_level_set(TAG, ESP_LOG_DEBUG);
+                    break;
+                case 5:
+                    esp_log_level_set(TAG, ESP_LOG_VERBOSE);
+                    break;
+                default:
+                    s3Tables.configTbl[0][49] = (uint16_t)esp_log_level_get(TAG);
+            }
+        }
     }
-    
     //Liberar memoria
 	//tablesUnload(&s3Tables);
-
 }
 
 //____________________________________________________________________________________________________
@@ -396,10 +423,16 @@ esp_err_t tablesInit(varTables_t *tables,
 }
 
 esp_err_t tablePrint(uint16_t *table, uint8_t size){
+    static const char TAG[] = "Table print";
+    esp_log_level_set(TAG, s3Tables.configTbl[0][49]);
+    char text[350] = {'\0'};
+    char buffer[10] = {'\0'};
 	for (int i=0; i < size; i++){
-	    printf("%u ",table[i]);
+	    sprintf(buffer, "%u ",table[i]);
+        strcat(text, buffer);
+        strcat(text, " ");
 	}
-    printf("\n");
+    ESP_LOGI(TAG, "%s\n", text);
     return ESP_OK;
 }
 
@@ -890,8 +923,10 @@ void spi_transaction_counter(){
 }
 
 void print_spi_stats(){
+    static const char TAG[] = "SPI stats";
+    esp_log_level_set(TAG, s3Tables.configTbl[0][49]);
     uint32_t trans_count = ((uint32_t)(SPI_TRANSACTION_COUNT_H) << 16) | SPI_TRANSACTION_COUNT_L;
-    printf("\nTransaction count: %lu Error count: %u Eror ratio: %.2f%%\n", 
+    ESP_LOGD(TAG, "Transaction count: %lu Error count: %u Eror ratio: %.2f%%", 
         trans_count, SPI_ERROR_COUNT, (float)SPI_ERROR_COUNT * 100/trans_count);
 }
 
@@ -900,7 +935,7 @@ void print_spi_stats(){
 void spi_task(void *pvParameters)
 {
     uint16_t exchgTimeStart, exchgTimeFinish;
-    //vTaskDelay(pdMS_TO_TICKS(100));
+    
     init_spi();
 
     xSemaphoreGive(rdySem);
@@ -930,7 +965,6 @@ void spi_task(void *pvParameters)
         cycleTimeStart = esp_timer_get_time();
         SPI_EXCHANGE_TIME = (exchgTimeFinish - exchgTimeStart);
 
-        //vTaskDelay(pdMS_TO_TICKS(1));
         taskYIELD();
     }
 }
